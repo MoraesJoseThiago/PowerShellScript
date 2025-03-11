@@ -1,51 +1,55 @@
-# Definição do caminho do arquivo com os nomes dos usuários
-$arquivo = "nomes.txt"
+# Caminho para o arquivo CSV contendo os dados dos usuários
+$arquivoUsuarios = "C:\Caminho\Para\Seu\Arquivo\usuarios.csv"
 
-# Definição da Unidade Organizacional (OU) onde os usuários serão criados
-$OU = "OU=Usuarios,DC=dominio,DC=com"
-
-# Definição da senha temporária
+# Definir senha padrão para todos os usuários
 $senhaPadrao = "Senha@123"
 
-# Lista dos grupos que serão criados no Active Directory
-$gruposAD = "TI", "Comercial", "Financeiro", "Compras", "Produção"
+# Definir o domínio para os UPN (User Principal Name)
+$dominio = "dominio.com"
 
-# Criar grupos caso não existam
-foreach ($grupo in $gruposAD) {
-    if (-not (Get-ADGroup -Filter { Name -eq $grupo })) {
-        New-ADGroup -Name $grupo -GroupScope Global -Path "OU=Grupos,$OU" -Description "Grupo de $grupo"
-    }
-}
+# Importar os usuários do arquivo CSV
+$usuarios = Import-Csv -Path $arquivoUsuarios -Delimiter ";"
 
-# Inicializa contador para distribuir usuários nos grupos
-$contador = 0
+# Exibir os usuários encontrados no arquivo
+$usuarios | ForEach-Object { Write-Host "Usuário encontrado: $($_.Nome), Grupo: $($_.Grupo)" }
 
-# Ler cada linha do arquivo e processar os usuários
-Get-Content $arquivo | ForEach-Object {
-    try {
-        # Separar nome do usuário e departamento
-        $dados = $_ -split ";"
-        $usuarioNome = $dados[0] -replace "_", " "
-        $usuarioLogin = ($dados[0] -replace "_", ".").ToLower()
-        
-        # Distribuir usuário entre os grupos de forma cíclica
-        $grupoUsuario = $gruposAD[$contador % $gruposAD.Count]
-        $contador++
-        
-        # Verificar se o usuário já existe antes de criar
-        if (-not (Get-ADUser -Filter {SamAccountName -eq $usuarioLogin})) {
-            # Criar o usuário no AD
-            New-ADUser -Name $usuarioNome -SamAccountName $usuarioLogin -UserPrincipalName "$usuarioLogin@dominio.com" -Path $OU `
-                -AccountPassword (ConvertTo-SecureString $senhaPadrao -AsPlainText -Force) -Enabled $true -ChangePasswordAtLogon $true
-            
-            # Adicionar usuário ao grupo correspondente
-            Add-ADGroupMember -Identity $grupoUsuario -Members $usuarioLogin
-        }
+# Processar cada usuário
+foreach ($usuario in $usuarios) {
+    $nomeDeConta = $usuario.Nome
+    $UPN = "$nomeDeConta@$dominio"
+    $grupo = $usuario.Grupo
+
+    # Verificar se o usuário já existe no Active Directory
+    if (-not (Get-ADUser -Filter {SamAccountName -eq $nomeDeConta} -ErrorAction SilentlyContinue)) {
+        # Criar o usuário no AD
+        New-ADUser -Name $usuario.Nome `
+                   -SamAccountName $nomeDeConta `
+                   -UserPrincipalName $UPN `
+                   -AccountPassword (ConvertTo-SecureString $senhaPadrao -AsPlainText -Force) `
+                   -Enabled $true `
+                   -ChangePasswordAtLogon $true `
+                   -Path "CN=Users,DC=dominio,DC=com"
+        Write-Host "Usuário $nomeDeConta criado."
+    } else {
+        Write-Host "Usuário $nomeDeConta já existe. Pulando criação..."
     }
-    catch {
-        Write-Host "Erro ao criar usuário: $_"
+
+    # Verificar se o grupo já existe no AD
+    if (-not (Get-ADGroup -Filter {Name -eq $grupo} -ErrorAction SilentlyContinue)) {
+        # Criar o grupo no AD
+        New-ADGroup -Name $grupo `
+                    -GroupScope Global `
+                    -GroupCategory Security `
+                    -Path "CN=Users,DC=dominio,DC=com"
+        Write-Host "Grupo $grupo criado."
+    } else {
+        Write-Host "Grupo $grupo já existe."
     }
+
+    # Adicionar o usuário ao grupo
+    Add-ADGroupMember -Identity $grupo -Members $nomeDeConta
+    Write-Host "Usuário $nomeDeConta adicionado ao grupo $grupo."
 }
 
 # Exibir mensagem de conclusão
-Write-Host "Processo concluído!"
+Write-Host "Processo de criação de usuários e grupos concluído!"
